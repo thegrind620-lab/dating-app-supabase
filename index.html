@@ -392,7 +392,7 @@
         // --- 1. SUPABASE INITIALIZATION ---
         const SUPABASE_URL = 'https://npnbtpxjpxxenajzwits.supabase.co';
         const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5wbmJ0cHhqcHh4ZW5hanp3aXRzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODExNDg0NzEsImV4cCI6MjA5NjcyNDQ3MX0.4e9cD-7BXy-fLQF0AgCZYYTopor4B6knmj9c-cWIuKI';
-        const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+        const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
         let currentUser = null;
         let deck = [];
@@ -465,14 +465,14 @@
                     resetBtn(); return;
                 }
 
-                const { error } = await supabase.auth.signUp({
+                const { error } = await supabaseClient.auth.signUp({
                     email, password,
                     options: { data: { username, intent } }
                 });
                 if (error) showToast(error.message, 'error');
                 else showToast('Account created! Please check email if required.', 'success');
             } else {
-                const { error } = await supabase.auth.signInWithPassword({ email, password });
+                const { error } = await supabaseClient.auth.signInWithPassword({ email, password });
                 if (error) showToast(error.message, 'error');
             }
             resetBtn();
@@ -484,7 +484,7 @@
         }
 
         // --- 3. SESSION & ROUTING ---
-        supabase.auth.onAuthStateChange((event, session) => {
+        supabaseClient.auth.onAuthStateChange((event, session) => {
             if (session) {
                 currentUser = session.user;
                 document.getElementById('view-auth').classList.remove('active');
@@ -503,7 +503,7 @@
             document.getElementById('empty-state').classList.add('hidden');
             
             // Fetch profiles. RLS will automatically filter by intent, trust score, etc!
-            const { data, error } = await supabase
+            const { data, error } = await supabaseClient
                 .from('profiles')
                 .select('*')
                 .limit(10);
@@ -581,7 +581,7 @@
             const action = direction === 'right' ? 'like' : direction === 'left' ? 'pass' : 'super_like';
             const targetProfile = deck[deck.length - 1];
             
-            await supabase.from('swipes').insert({
+            await supabaseClient.from('swipes').insert({
                 user_id: currentUser.id,
                 target_id: targetProfile.id,
                 action: action
