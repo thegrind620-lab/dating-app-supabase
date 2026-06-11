@@ -1,0 +1,100 @@
+-- 1. ENABLE EXTENSIONS
+create extension if not exists vector; 
+create extension if not exists "uuid-ossp";
+create extension if not exists pg_cron; 
+
+-- 2. DEFINE ENUMS
+create type public.app_intent as enum ('marriage', 'long_term', 'casual', 'friends');
+create type public.verification_status as enum ('unverified', 'id_pending', 'verified');
+create type public.swipe_action as enum ('like', 'pass', 'super_like');
+create type public.match_status as enum ('matched', 'chatting', 'met', 'blocked');
+
+-- 3. CORE TABLES
+create table public.profiles (
+  id uuid references auth.users on delete cascade primary key,
+  username text unique not null,
+  intent public.app_intent not null,
+  verification_status public.verification_status default 'unverified',
+  trust_score integer default 100 check (trust_score >= 0 and trust_score <= 100),
+  traits text[] default '{}',
+  bio text,
+  embedding vector(384), 
+  created_at timestamp with time zone default timezone('utc'::text, now()) not null,
+  last_active timestamp with time zone default timezone('utc'::text, now()) not null
+);
+
+create table public.swipes (
+  id uuid default uuid_generate_v4() primary key,
+  user_id uuid references public.profiles(id) on delete cascade not null,
+  target_id uuid references public.profiles(id) on delete cascade not null,
+  action public.swipe_action not null,
+  created_at timestamp with time zone default timezone('utc'::text, now()) not null,
+  unique(user_id, target_id)
+);
+
+create table public.matches (
+  id uuid default uuid_generate_v4() primary key,
+  user1_id uuid references public.profiles(id) on delete cascade not null,
+  user2_id uuid references public.profiles(id) on delete cascade not null,
+  status public.match_status default 'matched',
+  created_at timestamp with time zone default timezone('utc'::text, now()) not null,
+  unique(user1_id, user2_id)
+);
+
+create table public.venues (
+  id uuid default uuid_generate_v4() primary key,
+  name text not null,
+  category text not null,
+  city text not null,
+  commission_rate numeric(5,2) default 10.00,
+  is_active boolean default true
+);
+
+-- 4. AUTOMATION: Auto-create profile on signup
+create or replace function public.handle_new_user()
+returns trigger as $$
+begin
+  insert into public.profiles (id, username, intent, trust_score)
+  values (new.id, new.raw_user_meta_data->>'username', new.raw_user_meta_data->>'intent'::public.app_intent, 100);
+  return new;
+end;
+$$ language plpgsql security definer;
+
+create trigger on_auth_user_created
+  after insert on auth.users
+  for each row execute procedure public.handle_new_user();
+
+-- 5. ROW LEVEL SECURITY (RLS)
+alter table public.profiles enable row level security;
+alter table public.swipes enable row level security;
+alter table public.matches enable row level security;
+alter table public.venues enable row level security;
+
+create policy "Users can view own profile" on public.profiles for select using (auth.uid() = id);
+
+create policy "View eligible swipe deck" on public.profiles for select using (
+  auth.uid() != id AND
+  intent = (select intent from public.profiles where id = auth.uid()) AND
+  trust_score >= 50 AND
+  verification_status in ('verified', 'id_pending') AND
+  id not in (select target_id from public.swipes where user_id = auth.uid())
+);
+
+create policy "Users can insert own swipes" on public.swipes for insert with check (auth.uid() = user_id);
+
+create policy "Users can view own matches" on public.matches for select using (auth.uid() = user1_id or auth.uid() = user2_id);
+
+create policy "Anyone can view active venues" on public.venues for select using (is_active = true);
+
+-- 6. TRIGGER: Auto-update last_active
+create or replace function public.update_last_active()
+returns trigger as $$
+begin
+  new.last_active = now();
+  return new;
+end;
+$$ language plpgsql;
+
+create trigger update_last_active_trigger
+  before update on public.profiles
+  for each row execute procedure public.update_last_active();
